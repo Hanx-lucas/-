@@ -10,7 +10,7 @@ def explicit_label_date(value: str, today: date) -> date | None:
         return today
     if text.startswith("昨天"):
         return today - timedelta(days=1)
-    match = re.fullmatch(r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日", text)
+    match = re.fullmatch(r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日(?:\s+\d{1,2}:\d{2})?", text)
     if match:
         try:
             value = date(int(match[1] or today.year), int(match[2]), int(match[3]))
@@ -44,3 +44,24 @@ def verified_older_article(record: dict, group: str, start: date) -> bool:
         return datetime.fromisoformat(str(record.get('publish_time'))).date() < start
     except ValueError:
         return False
+
+
+def newer_price_title(title: str, end: date, today: date) -> bool:
+    """Only skip clearly newer dated price cards; never stop on an unverified title.
+
+    Weekday groups remain ambiguous. A full month/day in the price headline
+    lets us skip newer cards without opening every recent weekday article.
+    Missing, invalid or conflicting dates retain original-page verification.
+    """
+    text = unicodedata.normalize("NFKC", title or "")
+    matches = re.findall(r"(?:(20\d{2})[年./-])?(\d{1,2})[月./-](\d{1,2})(?:日)?", text)
+    days = set()
+    for year, month, day in matches:
+        try:
+            parsed = date(int(year or today.year), int(month), int(day))
+            if not year and parsed > today:
+                parsed = parsed.replace(year=today.year - 1)
+            days.add(parsed)
+        except ValueError:
+            return False
+    return len(days) == 1 and next(iter(days)) > end

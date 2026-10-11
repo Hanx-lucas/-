@@ -142,17 +142,23 @@ function renderResult(r, live = false) {
     const a = document.createElement('a'); a.href = '/download/' + encodeURIComponent(name); a.title = name; a.append(icon('download'), fileLabel(name)); $('downloads').append(a);
   });
 }
+let activeJobId = null;
 function show(s) {
+  activeJobId = s.job_id;
+  const pausing = s.pause_requested && !s.paused;
+  $('pause-job').hidden = !(s.running && s.pausable && !s.pause_requested);
+  $('resume-job').hidden = !(s.running && s.pause_requested);
+  $('resume-job').textContent = s.paused ? '继续采集' : '取消暂停';
   const failed = s.message.startsWith('运行失败');
   $('job-progress').hidden = !(s.running || s.job_id);
   $('job-progress').setAttribute('aria-busy', String(s.running));
   $('job-progress').classList.toggle('failed', failed);
-  $('progress-title').textContent = s.running ? '正在更新数据库' : failed ? '更新失败，请重试' : s.result?.collection_incomplete ? '部分更新完成' : '任务结束';
+  $('progress-title').textContent = s.paused ? '任务已暂停' : pausing ? '正在暂停' : s.running ? '正在更新数据库' : failed ? '更新失败，请重试' : s.result?.collection_incomplete ? '部分更新完成' : '任务结束';
   $('progress-bar').value = s.progress || 0;
   $('progress-value').textContent = (s.progress || 0) + '%';
-  $('progress-message').textContent = s.message;
-  $('progress-reminder').hidden = !(s.running && s.mode === 'rpa');
-  $('state').textContent = s.running ? '正在运行' : s.message.startsWith('运行失败') ? '运行失败' : s.result ? '任务完成' : latestRun?.verified ? '已核验数据库' : latestRun ? '数据库已就绪' : '等待操作';
+  $('progress-message').textContent = s.paused ? '已保留当前进度，点击继续采集即可接着处理。保持微信列表打开，继续前不要改变页面。' : pausing ? '正在完成当前文章并返回列表，随后暂停。' : s.message;
+  $('progress-reminder').hidden = !(s.running && !s.paused && s.mode === 'rpa');
+  $('state').textContent = s.paused ? '已暂停' : pausing ? '正在暂停' : s.running ? '正在运行' : s.message.startsWith('运行失败') ? '运行失败' : s.result ? '任务完成' : latestRun?.verified ? '已核验数据库' : latestRun ? '数据库已就绪' : '等待操作';
   $('state').parentElement.title = s.message;
   $('task-pill').classList.toggle('busy', s.running);
   $('task-pill').classList.toggle('failed', s.message.startsWith('运行失败'));
@@ -232,6 +238,14 @@ function notifyCompletion(s) {
   $('completion-download').hidden = !success;
   if (success) $('completion-download').href = '/download/' + encodeURIComponent(r.excel);
   if (!$('completion').open) $('completion').showModal();
+}
+for (const [id, route] of [['pause-job', '/api/pause'], ['resume-job', '/api/resume']]) {
+  $(id).addEventListener('click', async () => {
+    $(id).disabled = true;
+    try { await api(route, {job_id:activeJobId}); show(await api('/api/status')); }
+    catch (e) { $('alert').textContent = e.message; }
+    finally { $(id).disabled = false; }
+  });
 }
 $('completion-close').addEventListener('click', () => $('completion').close());
 $('job').addEventListener('submit', async event => {

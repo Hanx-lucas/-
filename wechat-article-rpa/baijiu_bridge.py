@@ -15,6 +15,7 @@ from uuid import uuid4
 from article_ingest import parse_page, parse_page_html, parse_publish_time, ingest
 from article_assets import capture_images, ocr_rows, table_grid
 from baijiu_title_rules import is_price_title
+from run_control import wait_if_paused
 
 BASE = Path(__file__).resolve().parent
 WORKSPACE = BASE.parent
@@ -205,6 +206,7 @@ def export_records(records, start, end, run_dir, *, download_images=True):
               "channel": methods[0] if len(methods) == 1 else "mixed"}
     seen = set()
     for index, record in enumerate(records):
+        wait_if_paused()
         progress(70 + 18 * index / max(len(records), 1),
                  f"正在识别文章表格与图片 {index + 1}/{len(records)}：{record.get('account_name', '')}")
         item = {"title": record.get("title", ""), "account": record.get("account_name", ""), "url": ""}
@@ -327,7 +329,8 @@ def main():
         command = [sys.executable, str(BASE / "wechat_visual_rpa.py"), "--run-search-accounts", "--live", "--local-only", "--metrics", "none", "--price-only", "--start-date", str(start), "--end-date", str(end), "--max-pages", "48", "--max-articles", "40", "--task-timeout-minutes", "6", "--output-dir", str(run_dir / "desktop"), "--export-jsonl", str(jsonl), "--export-csv", str(run_dir / "articles.csv")]
         for account in accounts:
             command.extend(["--account-name", account])
-        collection = subprocess.run(command, cwd=BASE, env=dict(os.environ, PYTHONIOENCODING="utf-8"), timeout=2400)
+        collection = subprocess.run(command, cwd=BASE, env=dict(os.environ, PYTHONIOENCODING="utf-8"),
+                                    timeout=None if os.environ.get("RPA_PAUSE_FILE") else 2400)
         if jsonl.exists():
             records.extend(json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines() if line.strip())
         collection_errors = []
@@ -342,6 +345,7 @@ def main():
     if args.jsonl:
         records.extend(json.loads(line) for line in Path(args.jsonl).read_text(encoding="utf-8").splitlines() if line.strip())
     for url in args.url:
+        wait_if_paused()
         progress(65, "正在读取补录的微信原文链接")
         url = valid_url(url)
         page = parse_page(url)

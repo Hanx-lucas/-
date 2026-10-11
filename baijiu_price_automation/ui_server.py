@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import uuid
 import webbrowser
 from datetime import datetime, timedelta, timezone
@@ -20,7 +21,43 @@ BASE = Path(__file__).resolve().parent
 ROOT = BASE.parent
 OUTPUTS = BASE / "outputs"
 STATE = {"running": False, "message": "等待操作", "result": None, "log": "", "progress": 0, "job_id": None}
-LOCK = threading.Lock()
+LOCK = threading.RLock()
+CONTROL_ENV = {}
+
+def request_pause(job_id):
+    with LOCK:
+        if not STATE["running"] or job_id != STATE.get("job_id"):
+            raise ValueError("任务已结束或已变更，请刷新页面")
+        if not STATE.get("pausable"):
+            raise ValueError("当前阶段正在写入数据库，请等待完成")
+        Path(CONTROL_ENV["RPA_PAUSE_FILE"]).touch()
+        STATE["pause_requested"] = True
+
+def request_resume(job_id):
+    with LOCK:
+        if not STATE["running"] or job_id != STATE.get("job_id"):
+            raise ValueError("任务已结束或已变更，请刷新页面")
+        Path(CONTROL_ENV["RPA_PAUSE_FILE"]).unlink(missing_ok=True)
+        STATE.update(pause_requested=False, paused=False)
+
+def job_boundary():
+    with LOCK:
+        paused = STATE.get("pause_requested", False)
+        if paused:
+            STATE["paused"] = True
+    while STATE.get("pause_requested", False):
+        time.sleep(0.1)
+    STATE["paused"] = False
+
+
+def begin_write_phase():
+    # Serialize the last pause request with the transition to the Excel writer.
+    while True:
+        job_boundary()
+        with LOCK:
+            if not STATE.get("pause_requested"):
+                STATE["pausable"] = False
+                return
 PORT = 8765
 
 def database_config():
@@ -132,6 +169,11 @@ def set_progress(percent, message):
 def consume_job_line(line):
     STATE["log"] = (STATE["log"] + line)[-80000:]
     try:
+        if line.startswith("RPA_CONTROL "):
+            item = json.loads(line.removeprefix("RPA_CONTROL "))
+            with LOCK:
+                STATE["paused"] = item["event"] == "paused" and STATE.get("pause_requested", False)
+            return
         if line.startswith("RPA_PROGRESS "):
             item = json.loads(line.removeprefix("RPA_PROGRESS "))
             set_progress(item["percent"], item["message"])
@@ -152,6 +194,11 @@ def consume_job_line(line):
             STATE["accounts_completed"] = event["completed"]
             set_progress(5 + 65 * event["completed"] / max(event["total"], 1),
                          f"已完成公众号 {event['completed']}/{event['total']}：{event['account']}")
+        elif kind == "profile_page_analyzed":
+            labels = "、".join(str(x) for x in event.get("time_labels", []) if x)
+            STATE["message"] = f"正在翻阅公众号列表：{event['account']} · 第 {event['page']} 屏" + (f"（{labels}）" if labels else "")
+        elif kind == "article_card_skipped_newer_title":
+            STATE["message"] = f"已略过结束日期之后的文章：{event['account']} · {event['title']}"
         elif kind == "article_open_attempt":
             STATE["message"] = f"正在获取链接：{event['account']} · {event['title']}" + (f"（重试 {event['attempt'] - 1}）" if event['attempt'] > 1 else '')
         elif kind == "article_collect_succeeded":
@@ -165,7 +212,7 @@ def stream_child(command, cwd, timeout):
     output = []
     proc = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, encoding="utf-8", errors="replace",
-                            env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1"),
+                            env=dict(os.environ, **CONTROL_ENV, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1"),
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     def read():
         for line in proc.stdout:
@@ -173,8 +220,17 @@ def stream_child(command, cwd, timeout):
             consume_job_line(line)
     reader = threading.Thread(target=read, daemon=True)
     reader.start()
+    active_seconds = 0.0
+    previous = time.monotonic()
     try:
-        proc.wait(timeout=timeout)
+        while proc.poll() is None:
+            time.sleep(0.1)
+            now = time.monotonic()
+            if not STATE.get("paused", False):
+                active_seconds += now - previous
+            previous = now
+            if active_seconds >= timeout:
+                raise subprocess.TimeoutExpired(command, timeout)
     except subprocess.TimeoutExpired:
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
@@ -190,10 +246,12 @@ def stream_child(command, cwd, timeout):
 
 
 def run_child(script, args, timeout=600):
+    job_boundary()
     return stream_child([sys.executable, "-u", str(BASE/script), *args], BASE, timeout)
 
 def run_job(payload):
     try:
+        job_boundary()
         set_progress(2, "正在检查数据库和更新配置")
         mode = payload.get("mode", "local")
         start = datetime.fromisoformat(payload["start"]).date()
@@ -262,6 +320,7 @@ def run_job(payload):
                 if parsed.scheme not in {"http", "https"} or parsed.hostname != "mp.weixin.qq.com" or parsed.username or parsed.password or parsed.port not in {None,80,443}:
                     raise ValueError("只接受微信原文链接")
                 command.extend(["--url", url])
+            job_boundary()
             child = stream_child(command, rpa_root, 3600)
             if child.returncode:
                 reasons = re.findall(r"(?:RuntimeError|ValueError): ([^\n]+)", child.stdout)
@@ -272,6 +331,7 @@ def run_job(payload):
             shared_report = OUTPUTS / (run_dir.name + "-report.json")
             shared_report.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             rpa_report = shared_report
+        begin_write_phase()
         set_progress(90, "正在按模板更新 Excel 并生成复核记录")
         sample = mode == "sample"
         input_dir = rpa_inputs or BASE / ("examples" if sample else "article_inputs/WeRSS" if mode == "history" else "article_inputs")
@@ -329,7 +389,11 @@ def run_job(payload):
         STATE["message"] = f"运行失败：{exc}"
         STATE["log"] += f"\n{type(exc).__name__}: {exc}"
     finally:
-        STATE["running"] = False
+        with LOCK:
+            STATE.update(running=False, paused=False, pause_requested=False, pausable=False)
+            if CONTROL_ENV.get("RPA_PAUSE_FILE"):
+                Path(CONTROL_ENV["RPA_PAUSE_FILE"]).unlink(missing_ok=True)
+            CONTROL_ENV.clear()
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
@@ -392,11 +456,20 @@ class Handler(BaseHTTPRequestHandler):
                     if STATE["running"]:
                         self.reply({"error":"已有任务正在运行"},409)
                         return
+                    job_id = uuid.uuid4().hex
+                    CONTROL_ENV["RPA_PAUSE_FILE"] = str(OUTPUTS / ("pause-" + job_id))
                     STATE.update(running=True,message="正在启动",result=None,log="",progress=0,
-                                 job_id=uuid.uuid4().hex, started_at=datetime.now().isoformat(),
+                                 paused=False, pause_requested=False, pausable=True,
+                                 job_id=job_id, started_at=datetime.now().isoformat(),
                                  mode=payload.get("mode", "local"), accounts_total=0, accounts_completed=0)
                     threading.Thread(target=run_job,args=(payload,),daemon=True).start()
                 self.reply({"started":True})
+            elif self.path == "/api/pause":
+                request_pause(payload.get("job_id"))
+                self.reply({"pause_requested": True})
+            elif self.path == "/api/resume":
+                request_resume(payload.get("job_id"))
+                self.reply({"resumed": True})
             elif self.path == "/api/database":
                 with LOCK:
                     if STATE["running"]:

@@ -47,7 +47,8 @@ from article_ingest import (
     parse_publish_time,
     shanghai_timezone,
 )
-from history_dates import eligible_label, older_label
+from history_dates import eligible_label, older_label, newer_price_title
+from run_control import wait_if_paused
 
 PRICE_START = None
 PRICE_END = None
@@ -3160,8 +3161,15 @@ def analyze_profile_window(
     """
     activate_window(profile_window.hwnd)
     if move_to_latest:
+        # Refresh the verified profile rather than reuse a previously loaded feed.
+        user32.keybd_event(0x74, 0, 0, 0)  # F5
+        user32.keybd_event(0x74, 0, 0x0002, 0)
+        time.sleep(1.2)
         press_ctrl_home()
+        # Ctrl+Home alone may leave the inner webview's scroll position unchanged.
+        scroll_window_up(profile_window.rect, wheel_notches=100)
         time.sleep(0.8)
+        log_event("profile_latest_requested", hwnd=profile_window.hwnd)
     output_dir.mkdir(parents=True, exist_ok=True)
     if profile_window.shared_browser:
         try:
@@ -3476,6 +3484,9 @@ def collect_searched_account(
         processed_count = 0
         stop_reason = "达到最大翻页数"
         for page_index in range(1, HISTORY_MAX_PAGES + 1):
+            paused_seconds = wait_if_paused()
+            if deadline is not None:
+                deadline += paused_seconds
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f"账号 {account_name} 达到任务超时限制")
             feed = analyze_account_window(
@@ -3755,6 +3766,9 @@ def collect_profile_account(
             deadline = time.monotonic() + task_timeout_minutes * 60
 
         for page_index in range(1, HISTORY_MAX_PAGES + 1):
+            paused_seconds = wait_if_paused()
+            if deadline is not None:
+                deadline += paused_seconds
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f"账号 {account_name} 达到任务超时限制")
             if profile_identity is not None:
@@ -3798,6 +3812,9 @@ def collect_profile_account(
             )
             older_boundary = ""
             for event in events:
+                paused_seconds = wait_if_paused()
+                if deadline is not None:
+                    deadline += paused_seconds
                 if event["kind"] == "label":
                     label = str(event.get("text") or "").strip()
                     current_group = label
@@ -3815,6 +3832,11 @@ def collect_profile_account(
                 title = str(event.get("title") or "").strip()
                 if PRICE_ONLY and not is_price_title(title):
                     skipped.append({"title": title, "reason": "非行情标题，继续扫描后续卡片"})
+                    continue
+                if PRICE_END and newer_price_title(title, PRICE_END, datetime.now(shanghai_timezone()).date()):
+                    out_of_range_card_count += 1
+                    log_event("article_card_skipped_newer_title", account=account_name,
+                              title=title, end_date=PRICE_END.isoformat())
                     continue
                 title_signature = build_card_title_signature(current_group, event)
                 if title_signature is None:
@@ -4387,6 +4409,7 @@ def main() -> None:
         )
         summaries = []
         for account_name in account_names:
+            wait_if_paused()
             account_output_dir = Path(args.output_dir) / safe_path_name(account_name)
             try:
                 collector = (
