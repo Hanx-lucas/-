@@ -22,6 +22,10 @@ PRICE_APP = WORKSPACE / "baijiu_price_automation"
 CONFIG = PRICE_APP / "config/baijiu_price_config.json"
 
 
+def progress(percent, message):
+    print("RPA_PROGRESS " + json.dumps({"percent": percent, "message": message}, ensure_ascii=False), flush=True)
+
+
 def compact(value):
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value))).lower().replace("°", "度")
 
@@ -200,7 +204,9 @@ def export_records(records, start, end, run_dir, *, download_images=True):
     report = {"start": start.isoformat(), "end": end.isoformat(), "articles": [], "review": [], "inputs": str(input_dir), "collection_methods": methods,
               "channel": methods[0] if len(methods) == 1 else "mixed"}
     seen = set()
-    for record in records:
+    for index, record in enumerate(records):
+        progress(70 + 18 * index / max(len(records), 1),
+                 f"正在识别文章表格与图片 {index + 1}/{len(records)}：{record.get('account_name', '')}")
         item = {"title": record.get("title", ""), "account": record.get("account_name", ""), "url": ""}
         try:
             url = valid_url(record["url"])
@@ -321,12 +327,22 @@ def main():
         command = [sys.executable, str(BASE / "wechat_visual_rpa.py"), "--run-search-accounts", "--live", "--local-only", "--metrics", "none", "--price-only", "--start-date", str(start), "--end-date", str(end), "--max-pages", "48", "--max-articles", "40", "--task-timeout-minutes", "6", "--output-dir", str(run_dir / "desktop"), "--export-jsonl", str(jsonl), "--export-csv", str(run_dir / "articles.csv")]
         for account in accounts:
             command.extend(["--account-name", account])
-        subprocess.run(command, cwd=BASE, env=dict(os.environ, PYTHONIOENCODING="utf-8"), timeout=2400, check=True)
+        collection = subprocess.run(command, cwd=BASE, env=dict(os.environ, PYTHONIOENCODING="utf-8"), timeout=2400)
         if jsonl.exists():
             records.extend(json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines() if line.strip())
+        collection_errors = []
+        summaries_path = run_dir / "desktop/batch-summary.json"
+        if summaries_path.exists():
+            summaries = json.loads(summaries_path.read_text(encoding="utf-8"))
+            collection_errors = [{"account": s.get("account", ""), "reason": s["fatal_error"]}
+                                 for s in summaries if s.get("fatal_error")]
+        if collection.returncode and not records:
+            reason = collection_errors[-1]["reason"] if collection_errors else "微信桌面采集未完成"
+            raise RuntimeError(reason + "；未取得可用文章，未更新 Excel")
     if args.jsonl:
         records.extend(json.loads(line) for line in Path(args.jsonl).read_text(encoding="utf-8").splitlines() if line.strip())
     for url in args.url:
+        progress(65, "正在读取补录的微信原文链接")
         url = valid_url(url)
         page = parse_page(url)
         record = ingest(url, {}, "", "", "", dry_run=True, page=page)
@@ -335,6 +351,11 @@ def main():
     if not records:
         raise RuntimeError("没有取得文章，未更新Excel")
     report = export_records(records, start, end, run_dir, download_images=not args.no_images)
+    if args.live:
+        report["collection_errors"] = collection_errors
+        report["collection_incomplete"] = bool(collection.returncode or collection_errors)
+        (run_dir / "bridge_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    progress(88, "文章识别完成，准备更新 Excel 数据库")
     if not args.collect_only:
         if not args.workbook:
             raise ValueError("更新Excel须指定 --workbook")

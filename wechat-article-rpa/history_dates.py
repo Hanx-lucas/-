@@ -1,7 +1,7 @@
 """原资料页导航的日期范围扩展，最终日期仍以原文时间为准。"""
 import re
 import unicodedata
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 
 def explicit_label_date(value: str, today: date) -> date | None:
@@ -31,3 +31,16 @@ def eligible_label(value: str, start: date, end: date, today: date) -> bool:
 def older_label(value: str, start: date, today: date) -> bool:
     parsed = explicit_label_date(value, today)
     return bool(parsed and parsed < start)
+
+
+def verified_older_article(record: dict, group: str, start: date) -> bool:
+    """星期标签只作候选；原文身份和真实日期核验后才可停止历史翻页。"""
+    if record.get('status') != 'skipped_outside_scan_range' or not re.fullmatch(r'(?:星期|周)[一二三四五六日天1-7]', group.strip()):
+        return False
+    evidence = record.get('verification') or {}
+    if not all(evidence.get(key) is True for key in ('url_stable', 'title_matched', 'account_matched')):
+        return False
+    try:
+        return datetime.fromisoformat(str(record.get('publish_time'))).date() < start
+    except ValueError:
+        return False

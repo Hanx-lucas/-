@@ -196,7 +196,8 @@ class Navigator:
                  cache: InventoryCache | None = None,
                  selected: Callable[[], tuple] | None = None,
                  select_tab: Callable[[tuple], bool] | None = None,
-                 custom_tabs: Callable[[], bool] | None = None):
+                 custom_tabs: Callable[[], bool] | None = None,
+                 bind_origin: Callable[[Page], bool] | None = None):
         self.observe = observe
         self.next_tab = next_tab
         self.close_tab = close_tab
@@ -211,6 +212,7 @@ class Navigator:
         self.selected = selected or (lambda: ())
         self.select_tab = select_tab or (lambda identity: False)
         self.custom_tabs = custom_tabs or (lambda: False)
+        self.bind_origin = bind_origin or (lambda page: False)
 
     def confirm_added(self, before: Checkpoint, current: Page) -> bool:
         if self.added_target(before, current):
@@ -315,6 +317,11 @@ class Navigator:
 
     def capture(self, target_account: str = "") -> Checkpoint:
         pages = self.inventory()
+        if self.custom_tabs() and not self.selected():
+            signature = self.signature()
+            if self.bind_origin(pages[0]):
+                if self.observe() != pages[0] or self.signature() != signature:
+                    raise RuntimeError("绑定标签后原页面或标签列表变化，已停止导航")
         return Checkpoint(pages[0], pages, target_account, self.signature(), self.selected())
 
     def checkpoint(self) -> Checkpoint:

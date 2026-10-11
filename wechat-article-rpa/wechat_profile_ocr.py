@@ -170,14 +170,21 @@ class WeChatProfileOCR:
     def locate_copy_link_action(self, screenshot: Image.Image) -> dict[str, Any]:
         """在文章浏览器菜单中定位“复制链接”，避免依赖不同电脑上的固定坐标。"""
         width, height = screenshot.size
+        rows = self._rows(screenshot)
         candidates = [
             row
-            for row in self._rows(screenshot)
-            if "复制" in row["normalized"]
-            and "链接" in row["normalized"]
-            # 浏览器菜单位于窗口上半部分；排除正文中偶然出现的同名文字。
+            for row in rows
+            if row["normalized"] == "复制链接"
+            and row["confidence"] >= 0.80
+            # 微信 4.x 的菜单随活动标签移动，可出现在左侧。
+            # 用相邻菜单项验证身份，不能再用“右侧 30%”判断。
             and row["center_y"] < height * 0.45
-            and row["center_x"] > width * 0.30
+            and any(
+                other["normalized"] in {"刷新", "调整文字大小", "全文翻译", "听全文", "查找", "查找...", "打印"}
+                and abs(other["left"] - row["left"]) < width * 0.07
+                and abs(other["center_y"] - row["center_y"]) < height * 0.20
+                for other in rows
+            )
         ]
         if not candidates:
             return {"found": False, "reason": "浏览器菜单中未识别到复制链接"}

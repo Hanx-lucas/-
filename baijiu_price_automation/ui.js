@@ -2,6 +2,7 @@ const $ = id => document.getElementById(id);
 const modeCards = [...document.querySelectorAll('.mode-card')];
 const num = value => value == null ? '—' : Number(value).toLocaleString('zh-CN');
 let polling = false, wasRunning = false, latestRun = null, displayedKey = '', config = null;
+let notifiedJob = null;
 
 function icon(name) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -19,7 +20,7 @@ async function api(path, body) {
   return data;
 }
 const hints = {
-  rpa:'请先登录 Windows 微信并打开搜一搜。采集会操作微信窗口，请保持桌面解锁，暂停鼠标和键盘操作。',
+  rpa:'请先登录 Windows 微信并打开搜一搜。更新期间不要关闭搜一搜窗口，请保持桌面解锁，暂停鼠标和键盘操作。',
   rpa_links:'粘贴微信原文链接，解析 HTML 表格与正文图片，运行本地 OCR 并更新数据库。无需微信读书授权。',
   history:'需要本机 WeRSS 服务及微信读书授权。每账号只返回最新一篇；历史补抓依赖公开合集，无法替代 RPA 历史采集。',
   local:'读取已导入的文章，解析行情并生成新的 Excel 数据库副本。',
@@ -142,6 +143,15 @@ function renderResult(r, live = false) {
   });
 }
 function show(s) {
+  const failed = s.message.startsWith('运行失败');
+  $('job-progress').hidden = !(s.running || s.job_id);
+  $('job-progress').setAttribute('aria-busy', String(s.running));
+  $('job-progress').classList.toggle('failed', failed);
+  $('progress-title').textContent = s.running ? '正在更新数据库' : failed ? '更新失败，请重试' : s.result?.collection_incomplete ? '部分更新完成' : '任务结束';
+  $('progress-bar').value = s.progress || 0;
+  $('progress-value').textContent = (s.progress || 0) + '%';
+  $('progress-message').textContent = s.message;
+  $('progress-reminder').hidden = !(s.running && s.mode === 'rpa');
   $('state').textContent = s.running ? '正在运行' : s.message.startsWith('运行失败') ? '运行失败' : s.result ? '任务完成' : latestRun?.verified ? '已核验数据库' : latestRun ? '数据库已就绪' : '等待操作';
   $('state').parentElement.title = s.message;
   $('task-pill').classList.toggle('busy', s.running);
@@ -150,7 +160,7 @@ function show(s) {
   modeCards.forEach(card => card.disabled = s.running);
   // Lock the task configuration while the posted job is running.
   ['workbook','start','end','mode','seedurls','articles','database-open','database-file'].forEach(id => $(id).disabled = s.running);
-  $('log').textContent = s.log || '尚未运行';
+  if ($('log').textContent !== (s.log || '尚未运行')) $('log').textContent = s.log || '尚未运行';
   if (s.running) $('run-label').textContent = '正在更新数据库'; else updateMode();
   const r = s.result || latestRun;
   const key = JSON.stringify([!!s.result, r?.excel, r?.mode, r?.prices, r?.cells, r?.start, r?.end]);
@@ -192,13 +202,38 @@ async function poll() {
   try {
     const s = await api('/api/status'); show(s);
     $('service').replaceChildren(icon('check'), '本机服务已连接');
+    if ($('alert').textContent.startsWith('服务连接中断')) $('alert').textContent = '';
     if (s.running) { wasRunning = true; polling = true; setTimeout(poll, 1000); }
     else {
       polling = false; await refreshDatabases();
-      if (wasRunning) { wasRunning = false; await loadOverview(); if (!s.result) { displayedKey = ''; show(s); } }
+      if (wasRunning) {
+        wasRunning = false;
+        await loadOverview();
+        if (!s.result) { displayedKey = ''; show(s); }
+        notifyCompletion(s);
+      }
     }
-  } catch (e) { $('alert').textContent = e.message; $('service').textContent = '服务连接中断'; polling = false; }
+  } catch (e) {
+    $('alert').textContent = '服务连接中断，正在重新连接。请保留启动窗口。';
+    $('service').textContent = '服务连接中断';
+    if (wasRunning || polling) setTimeout(poll, 2000);
+  }
 }
+function notifyCompletion(s) {
+  if (!s.job_id || notifiedJob === s.job_id) return;
+  notifiedJob = s.job_id;
+  const r = s.result;
+  const success = r?.excel && r.prices > 0 && !s.message.startsWith('运行失败');
+  const dry = r?.mode === 'dry' && r.prices > 0;
+  $('completion-title').textContent = dry ? '试运行完成，未写入数据库' : success ? (r.sample ? '样例验证完成（模拟价格）' : r.collection_incomplete ? '部分更新完成，可下载数据库' : '更新成功，可下载数据库') : '更新失败，请重试';
+  $('completion-message').textContent = dry ? '匹配结果已生成，可在报价和复核记录中查看。' : success
+    ? `本次确认 ${num(r.prices)} 条报价，写入 ${num(r.cells)} 个位置。` + (r.collection_incomplete ? '部分公众号采集失败，已保留取得的数据，请补录缺少的文章或重试。' : '请检查复核记录；公众号未公布的品类保持空白。')
+    : s.message + '。请检查运行日志，确认微信已登录、搜一搜保持打开后重试。';
+  $('completion-download').hidden = !success;
+  if (success) $('completion-download').href = '/download/' + encodeURIComponent(r.excel);
+  if (!$('completion').open) $('completion').showModal();
+}
+$('completion-close').addEventListener('click', () => $('completion').close());
 $('job').addEventListener('submit', async event => {
   event.preventDefault(); $('alert').textContent = '';
   try {
@@ -206,7 +241,7 @@ $('job').addEventListener('submit', async event => {
     if (!Number.isFinite(days) || days < 0 || days > 31) throw new Error('请选择不超过 32 天的有效日期区间');
     $('run').disabled = true;
     await api('/api/run', {mode:$('mode').value, start:$('start').value, end:$('end').value, workbook:$('workbook').value, seed_urls:$('seedurls').value});
-    polling = true; await poll();
+    wasRunning = true; polling = true; await poll();
   } catch (e) { $('run').disabled = false; updateMode(); $('alert').textContent = e.message; }
 });
 $('upload').addEventListener('click', async () => {

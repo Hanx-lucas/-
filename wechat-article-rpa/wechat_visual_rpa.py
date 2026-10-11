@@ -897,9 +897,29 @@ def browser_navigator(window: WindowInfo, account: str) -> Navigator:
         user32.keybd_event(0x12, 0, 2, 0)
         time.sleep(0.8)
 
+    def bind_origin(origin: Page) -> bool:
+        # 自定义标签没有 selected 属性。通过点击真实标签实体，再核对完整
+        # 文档 key 来绑定，不能按标题相似或关闭按钮可见推测活动标签。
+        observe()
+        initial = tab_signature(evidence)
+        candidates = [tuple(t['id']) for t in evidence.get('custom_tabs', []) if not t.get('offscreen')]
+        for identity in candidates[:12]:
+            if choose_tab(identity) and observe() == origin:
+                if tab_signature(evidence) != initial:
+                    raise RuntimeError("绑定原标签期间列表变化，已停止导航")
+                log_event("browser_origin_tab_bound", account=account, tab=identity)
+                return True
+        # 绑定不成功时仍须返回原页面，继续使用原有保守遍历路径。
+        for _ in range(12):
+            if observe() == origin:
+                return False
+            next_tab()
+        raise RuntimeError("无法恢复原标签页面，已停止导航")
+
     return Navigator(observe, next_tab, close_tab, back,
                      signature=lambda: tab_signature(evidence), cache=cache,
                      selected=current_tab, select_tab=choose_tab,
+                     bind_origin=bind_origin,
                      custom_tabs=lambda: evidence.get("tab_probe_mode") == "custom-unverified",
                      on_reused=lambda old, new: TAB_OWNERSHIP.reuse(session, old, new),
                      on_created=lambda page: TAB_OWNERSHIP.remember(session, page),
@@ -2319,10 +2339,10 @@ def classify_collection_error(error: BaseException) -> str:
         return "account_filter"
     if "资料窗口顶部名称不匹配" in text:
         return "profile_validation"
-    if "ocr" in text or "识别" in text or "模板" in text:
-        return "interaction_ocr"
     if "复制链接" in text or "clipboard" in text or "url" in text:
         return "copy_link"
+    if "ocr" in text or "识别" in text or "模板" in text:
+        return "interaction_ocr"
     if "窗口" in text or "window" in text or "标签页" in text or "tab" in text:
         return "window"
     if "http" in text or "网络" in text or "timeout" in text or "timed out" in text:
@@ -3930,6 +3950,9 @@ def collect_profile_account(
                                 log_event("article_page_identity_validated_by_url", account=account_name,
                                           page=confirmed.__dict__)
                         if record.get("status") == "skipped_outside_scan_range":
+                            from history_dates import verified_older_article
+                            if PRICE_START and verified_older_article(record, current_group, PRICE_START):
+                                older_boundary = "原文发布时间 " + str(record.get("publish_time"))
                             skipped.append(
                                 {
                                     "title": title,
@@ -4001,6 +4024,10 @@ def collect_profile_account(
                         (article_dir / f"attempt-{article_attempt}-error.txt").write_text(
                             last_error, encoding="utf-8"
                         )
+                        if PRICE_ONLY and classify_collection_error(exc) == "copy_link":
+                            # 同一个菜单布局失败时反复重开文章没有作用。
+                            # 先执行 finally 恢复列表，再停止并保留已有结果。
+                            raise RuntimeError("复制链接失败，已停止采集以避免重复打开文章；请恢复搜一搜后重试：" + last_error) from exc
                         if isinstance(exc, ArticleMismatchError) or "多个匹配标题" in last_error or "无法恢复目标文章的列表位置" in last_error:
                             # 身份歧义不是加载超时，重试同一坐标不会得到可靠身份。
                             failure = {"account": account_name, "title": title,
@@ -4107,7 +4134,10 @@ def collect_profile_account(
         json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
     partial_summary_path.unlink(missing_ok=True)
-    log_event("account_collection_finished", **summary)
+    log_event("account_collection_finished", **({
+        "account": account_name, "articles_collected": len(collected),
+        "failures_count": len(failures), "stop_reason": stop_reason,
+    } if PRICE_ONLY else summary))
     return summary
 
 
@@ -4398,6 +4428,12 @@ def main() -> None:
                     category,
                 )
                 summaries.append(fatal_summary)
+                if PRICE_ONLY and category in {"copy_link", "window", "navigation_return", "search_recovery"}:
+                    (Path(args.output_dir) / "batch-summary.json").write_text(
+                        json.dumps(summaries, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+                    log_event("batch_collection_stopped", account=account_name, error=error,
+                              category=category, reason="桌面状态异常，停止重复点击，保留已取得文章")
+                    raise RuntimeError("微信采集已停止，请保持搜一搜打开后重试：" + error) from exc
                 if args.discovery_mode == "sogou-profile" and category in {"navigation_return", "search_recovery"}:
                     # 浏览器未恢复时停止整批，避免对后续账号重复执行同一失败链路。
                     try:
@@ -4408,6 +4444,8 @@ def main() -> None:
                             json.dumps(summaries, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
                         log_event("batch_navigation_blocked", account=account_name, error=str(recovery_error))
                         raise RuntimeError("浏览器导航未恢复，已停止本轮并保存结果；恢复搜一搜后重试") from recovery_error
+            log_event("account_collection_finished", account=account_name,
+                      completed=len(summaries), total=len(account_names))
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
         (Path(args.output_dir) / "batch-summary.json").write_text(
             json.dumps(summaries, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
@@ -4433,7 +4471,10 @@ def main() -> None:
                 len(summary.get("failures") or []) for summary in summaries
             ),
         )
-        print(json.dumps(summaries, ensure_ascii=False, indent=2, default=str))
+        console_summaries = [{"account": s.get("account"), "articles_collected": len(s.get("collected") or []),
+                              "stop_reason": s.get("stop_reason"), "fatal_error": s.get("fatal_error"),
+                              "failures_count": len(s.get("failures") or [])} for s in summaries] if PRICE_ONLY else summaries
+        print(json.dumps(console_summaries, ensure_ascii=False, indent=2, default=str))
         return
     if args.run_one_account:
         if not vl_available:

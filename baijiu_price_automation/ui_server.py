@@ -19,7 +19,7 @@ from workbook_imports import DatabaseImports
 BASE = Path(__file__).resolve().parent
 ROOT = BASE.parent
 OUTPUTS = BASE / "outputs"
-STATE = {"running": False, "message": "等待操作", "result": None, "log": ""}
+STATE = {"running": False, "message": "等待操作", "result": None, "log": "", "progress": 0, "job_id": None}
 LOCK = threading.Lock()
 PORT = 8765
 
@@ -125,16 +125,76 @@ def resolve_workbook(name):
         raise ValueError("正式更新不能使用样例数据库")
     return path
 
+def set_progress(percent, message):
+    STATE.update(progress=max(STATE.get("progress", 0), min(100, round(percent))), message=message)
+
+
+def consume_job_line(line):
+    STATE["log"] = (STATE["log"] + line)[-80000:]
+    try:
+        if line.startswith("RPA_PROGRESS "):
+            item = json.loads(line.removeprefix("RPA_PROGRESS "))
+            set_progress(item["percent"], item["message"])
+            return
+        begin = line.find('{"event":')
+        if begin < 0:
+            return
+        event = json.loads(line[begin:])
+        kind = event["event"]
+        if kind == "accounts_loaded":
+            STATE["accounts_total"] = event["count"]
+            STATE["accounts_completed"] = 0
+        elif kind == "account_collection_started":
+            STATE["account"] = event["account"]
+            set_progress(5 + 65 * STATE.get("accounts_completed", 0) / max(STATE.get("accounts_total", 6), 1),
+                         f"正在采集公众号 {STATE.get('accounts_completed', 0) + 1}/{STATE.get('accounts_total', 6)}：{event['account']}")
+        elif kind == "account_collection_finished":
+            STATE["accounts_completed"] = event["completed"]
+            set_progress(5 + 65 * event["completed"] / max(event["total"], 1),
+                         f"已完成公众号 {event['completed']}/{event['total']}：{event['account']}")
+        elif kind == "article_open_attempt":
+            STATE["message"] = f"正在获取链接：{event['account']} · {event['title']}" + (f"（重试 {event['attempt'] - 1}）" if event['attempt'] > 1 else '')
+        elif kind == "article_collect_succeeded":
+            STATE["message"] = f"已取得文章：{event['account']} · {event['title']}"
+    except (ValueError, KeyError, TypeError):
+        pass
+
+
+def stream_child(command, cwd, timeout):
+    # 实时读取子进程日志，不能等采集退出后才把状态交给网页。
+    output = []
+    proc = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, encoding="utf-8", errors="replace",
+                            env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1"),
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    def read():
+        for line in proc.stdout:
+            output.append(line)
+            consume_job_line(line)
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            proc.kill()
+        proc.wait(timeout=10)
+        raise RuntimeError("采集超时，已停止本次进程；请确认微信已登录且搜一搜保持打开后重试")
+    finally:
+        reader.join(timeout=5)
+        proc.stdout.close()
+    return subprocess.CompletedProcess(command, proc.returncode, ''.join(output), '')
+
+
 def run_child(script, args, timeout=600):
-    env = dict(os.environ, PYTHONIOENCODING="utf-8")
-    proc = subprocess.run([sys.executable, str(BASE/script), *args], cwd=BASE,
-                          capture_output=True, text=True, encoding="utf-8", env=env,
-                          timeout=timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    STATE["log"] += proc.stdout + proc.stderr
-    return proc
+    return stream_child([sys.executable, "-u", str(BASE/script), *args], BASE, timeout)
 
 def run_job(payload):
     try:
+        set_progress(2, "正在检查数据库和更新配置")
         mode = payload.get("mode", "local")
         start = datetime.fromisoformat(payload["start"]).date()
         end = datetime.fromisoformat(payload["end"]).date()
@@ -184,7 +244,7 @@ def run_job(payload):
             if new_reports:
                 history_report = new_reports[-1]
         if mode in {"rpa", "rpa_links"}:
-            STATE["message"] = "正在使用微信桌面采集并保留表格、下载图片和运行本地OCR"
+            set_progress(5, "请确认微信已登录，采集时不要关闭搜一搜窗口")
             rpa_root = ROOT / "wechat-article-rpa"
             run_dir = OUTPUTS / ("rpa-run-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f"))
             urls = [x.strip() for x in str(payload.get("seed_urls", "")).splitlines() if x.strip()]
@@ -202,19 +262,17 @@ def run_job(payload):
                 if parsed.scheme not in {"http", "https"} or parsed.hostname != "mp.weixin.qq.com" or parsed.username or parsed.password or parsed.port not in {None,80,443}:
                     raise ValueError("只接受微信原文链接")
                 command.extend(["--url", url])
-            child = subprocess.run(command, cwd=rpa_root, capture_output=True, text=True, encoding="utf-8",
-                                   env=dict(os.environ, PYTHONIOENCODING="utf-8"), timeout=3600,
-                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            STATE["log"] += child.stdout + child.stderr
+            child = stream_child(command, rpa_root, 3600)
             if child.returncode:
-                raise ValueError("RPA采集/解析未完成，见日志；未更新Excel")
+                reasons = re.findall(r"(?:RuntimeError|ValueError): ([^\n]+)", child.stdout)
+                raise ValueError(reasons[-1] if reasons else "RPA采集/解析未完成，见日志；未更新Excel")
             rpa_report = run_dir / "bridge_report.json"
             data = json.loads(rpa_report.read_text(encoding="utf-8"))
             rpa_inputs = Path(data["inputs"])
             shared_report = OUTPUTS / (run_dir.name + "-report.json")
             shared_report.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             rpa_report = shared_report
-        STATE["message"] = "正在解析行情、按模板更新并生成复核记录"
+        set_progress(90, "正在按模板更新 Excel 并生成复核记录")
         sample = mode == "sample"
         input_dir = rpa_inputs or BASE / ("examples" if sample else "article_inputs/WeRSS" if mode == "history" else "article_inputs")
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -226,6 +284,7 @@ def run_job(payload):
             args.append("--dry-run")
         before = set(OUTPUTS.glob("*.csv"))
         proc = run_child("update_baijiu_prices.py", args)
+        set_progress(96, "正在核对数据库写入结果")
         new_csv = set(OUTPUTS.glob("*.csv")) - before
         matches = next((x for x in new_csv if x.name.startswith("matches_")), None)
         missing = next((x for x in new_csv if x.name.startswith("missing_review_")), None)
@@ -249,6 +308,8 @@ def run_job(payload):
             rpa = json.loads(rpa_report.read_text(encoding="utf-8"))
             result["rpa_articles"] = rpa["articles"]
             result["rpa_review"] = rpa["review"]
+            result["collection_incomplete"] = rpa.get("collection_incomplete", False)
+            result["collection_errors"] = rpa.get("collection_errors", [])
         result["status"] = ("样例验证通过（模拟价格）" if sample and proc.returncode == 0
                             else "无可用价格，未生成 Excel" if not rows
                             else "试运行完成，未写 Excel" if mode == "dry"
@@ -260,6 +321,9 @@ def run_job(payload):
         if result["excel"] and not sample:
             DatabaseImports(BASE).clear_active()
         STATE["message"] = result["status"]
+        if result.get("collection_incomplete") and result["excel"]:
+            STATE["message"] = result["status"] = "部分更新完成；有公众号采集失败，请补录或重试"
+        STATE["progress"] = 100
         (OUTPUTS/f"run_summary_{stamp}.json").write_text(json.dumps(result, ensure_ascii=False, indent=2),encoding="utf-8")
     except Exception as exc:
         STATE["message"] = f"运行失败：{exc}"
@@ -328,7 +392,9 @@ class Handler(BaseHTTPRequestHandler):
                     if STATE["running"]:
                         self.reply({"error":"已有任务正在运行"},409)
                         return
-                    STATE.update(running=True,message="正在启动",result=None,log="")
+                    STATE.update(running=True,message="正在启动",result=None,log="",progress=0,
+                                 job_id=uuid.uuid4().hex, started_at=datetime.now().isoformat(),
+                                 mode=payload.get("mode", "local"), accounts_total=0, accounts_completed=0)
                     threading.Thread(target=run_job,args=(payload,),daemon=True).start()
                 self.reply({"started":True})
             elif self.path == "/api/database":

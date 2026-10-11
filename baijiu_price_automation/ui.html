@@ -56,6 +56,13 @@
 <div id="empty-result" class="empty-result" hidden><svg class="icon"><use href="#i-db"/></svg><strong>准备好建立第一份数据库</strong><p>选择采集方式和日期，运行后在这里查看报价。</p></div>
 <div id="result-content"><div class="results-head"><h3 id="result-caption">最近成功任务</h3><span class="period mono" id="result-period">—</span></div><div class="stats" id="stats" hidden></div><p class="result-note" id="result-note"></p></div>
 <p id="alert" role="alert"></p>
+<section id="job-progress" class="job-progress" hidden aria-label="数据库更新进度" aria-busy="false">
+<div class="progress-heading"><strong id="progress-title">正在更新数据库</strong><span id="progress-value">0%</span></div>
+<progress id="progress-bar" max="100" value="0" aria-label="当前更新阶段进度"></progress>
+<p id="progress-message" aria-live="polite">正在启动</p>
+<p id="progress-reminder" class="help">请登录电脑微信并打开搜一搜。更新期间不要关闭搜一搜窗口，保持桌面解锁，暂停鼠标和键盘操作。</p>
+<small>进度按处理阶段和公众号完成数量显示，单篇文章的加载与识别耗时会有差异。</small>
+</section>
 <div id="result-data"><div class="tabs" role="tablist" aria-label="运行结果"><button id="quotes-tab" type="button" role="tab" aria-controls="quotes-pane" aria-selected="true">确认报价<span class="tab-count" id="quotes-count">—</span></button><button id="review-tab" type="button" role="tab" aria-controls="review-pane" aria-selected="false" tabindex="-1">复核记录<span class="tab-count" id="review-count">—</span></button></div>
 <div class="data-pane" id="quotes-pane" role="tabpanel" aria-labelledby="quotes-tab"><div class="sources" id="brands" aria-label="各品牌确认报价"></div><label>查看品牌<select id="brand-filter"><option value="all">全部品牌</option><option value="茅台">茅台</option><option value="五粮液">五粮液</option><option value="泸州老窖">泸州老窖</option><option value="习酒">习酒</option></select></label><div id="quotes"></div></div><div class="data-pane" id="review-pane" role="tabpanel" aria-labelledby="review-tab" hidden><div id="rpaReview"></div><div id="gaps"></div><div id="coverage"></div></div><div class="sources" id="sources"></div><div class="downloads" id="downloads"></div></div>
 <details class="log-details"><summary>查看当前任务运行日志</summary><pre id="log">尚未运行</pre></details>
@@ -64,5 +71,6 @@
 <section class="library" id="database-library" aria-labelledby="library-title"><div class="section-heading"><h2 id="library-title"><span class="section-number mono">02</span>数据库版本</h2><p>每次成功更新自动轮换</p></div><div class="version-grid" id="versions"></div><p class="library-note">历史快照取目标日期当天或之前最近的版本。多余文件归档，旧下载链接仍可使用。</p></section>
 <footer class="footer"><span>酒价观测 · 本机采集与数据归档工作台</span><span>WECHAT → STRUCTURED DATA → EXCEL</span></footer>
 </main></div>
+<dialog id="completion" aria-labelledby="completion-title"><h2 id="completion-title">更新完成</h2><p id="completion-message"></p><div class="completion-actions"><a id="completion-download" class="primary" hidden>下载更新后的数据库</a><button id="completion-close" class="secondary" type="button">关闭</button></div></dialog>
 <dialog id="guide" aria-labelledby="guide-title"><h2 id="guide-title">开始一次行情更新</h2><ol><li>点击“导入自己的数据库”，上传同格式 XLSX；也可默认接续最新版本。上传文件另存副本并检查模板。选择需要更新的日期范围，一次最多 32 天。</li><li>微信历史采集：先登录 Windows 微信，打开搜一搜；采集期间保持桌面解锁，暂停鼠标和键盘操作。</li><li>已有原文链接：选择链接解析，逐行粘贴文章地址。微信读书通道需授权，只返回最新文章，历史补抓依赖公开合集。</li><li>完成后下载 Excel，并检查未取得报价与图片识别复核记录。</li></ol><p class="help">公众号未公布某品类属于正常缺失。工具不会补造报价；15 天和 1 月前的快照随历史积累生成。</p><button id="guide-close" class="secondary" type="button">我知道了</button></dialog>
 </body></html>
