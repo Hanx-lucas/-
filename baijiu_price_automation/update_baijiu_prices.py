@@ -176,6 +176,10 @@ def extract_prices(article: Article, config: dict) -> list[dict]:
                 text = compact(line)
                 if key not in text:
                     continue
+                if key[-1:].isdigit():
+                    boundary = ''.join(re.escape(ch) + r'\s*' for ch in key[:-1]) + re.escape(key[-1]) + r'(?!\d)'
+                    if not re.search(boundary, line.lower()):
+                        continue
                 if any(term in text and term not in key for term in ("雅致版", "品鉴装", "礼盒", "12瓶")):
                     continue
                 # Remove product codes, vintage, capacity and degree from price candidates.
