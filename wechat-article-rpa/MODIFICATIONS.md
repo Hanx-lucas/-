@@ -1,0 +1,1 @@
+Extended locally for liquor-price history collection, original HTML/image evidence, local OCR, template mapping, portable database input and UI. Modification date: 2026-10-11. Upstream: https://github.com/Dhaizei/wechat-article-rpa

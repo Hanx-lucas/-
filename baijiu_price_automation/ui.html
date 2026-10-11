@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#142d36"><title>酒价观测 · 白酒价格数据库</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/ui.css"><script src="/ui.js" defer></script></head>
+<body>
+<svg class="sprites" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+<symbol id="i-mark" viewBox="0 0 24 24"><path d="M4 19V11h4v8M10 19V5h4v14M16 19V8h4v11M3 19h18"/></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+<symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 4 16 4 16 0V5M4 12v7c0 4 16 4 16 0v-7"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+<symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M8 21h8M12 16v5m-5-13 3 3 6-6"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="m10 13 4-4M8 16l-1 1a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0m0 2 1-1a4 4 0 0 1 6 6l-5 5a4 4 0 0 1-6 0" transform="translate(2 1)"/></symbol>
+<symbol id="i-book" viewBox="0 0 24 24"><path d="M12 5c-3-2-6-2-9-1v15c3-1 6-1 9 1 3-2 6-2 9-1V4c-3-1-6-1-9 1v15"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8zM14 3v5h5M8 12h8M8 16h6"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+<symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v.1"/></symbol>
+<symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m-5 5 5-5 5 5M4 16v5h16v-5"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+</defs></svg>
+<aside class="sidebar">
+<a class="brand" href="#workspace" aria-label="酒价观测采集工作台"><div class="brand-mark"><svg class="icon"><use href="#i-mark"/></svg></div><div><strong>酒价观测</strong><small>JIU PRICE OBSERVATORY</small></div></a>
+<p class="side-label">WORKSPACE</p>
+<nav class="nav" aria-label="工作区导航"><a class="active" href="#workspace" aria-label="采集工作台"><svg class="icon"><use href="#i-grid"/></svg><span>采集工作台</span></a><a href="#database-library" aria-label="数据库版本"><svg class="icon"><use href="#i-db"/></svg><span>数据库版本</span></a><a href="#results" aria-label="报价与复核"><svg class="icon"><use href="#i-check"/></svg><span>报价与复核</span></a></nav>
+<div class="side-flow"><p>DATA WORKFLOW</p><div><i class="flow-dot"></i>公众号原文</div><div><i class="flow-dot"></i>结构化报价</div><div><i class="flow-dot"></i>Excel 数据库</div></div>
+<div class="side-bottom"><strong><i class="dot"></i>本地工作区</strong>数据与文件保存在本机</div>
+</aside>
+<div class="app"><header class="topbar"><div class="breadcrumb"><span>研究工具</span><span>/</span><strong>白酒价格数据库</strong></div><div class="top-actions"><span class="service" id="service"><i class="dot"></i>正在连接服务</span><button class="plain-button" id="guide-open" type="button"><svg class="icon"><use href="#i-info"/></svg>使用说明</button></div></header>
+<main>
+<div class="hero"><div><div class="eyebrow">RESEARCH DATA WORKSPACE</div><h1>白酒行情 · 数据工作台</h1><p>从公众号原文到价格数据库，让每一条报价都有据可查。</p></div><div class="hero-note">最近数据库更新<strong id="last-updated" class="mono">—</strong></div></div>
+<section class="kpis" aria-label="最近数据库指标">
+<div class="kpi"><div class="kpi-label"><svg class="icon"><use href="#i-book"/></svg>采集来源</div><div class="kpi-value"><span id="account-count">—</span><small>个公众号</small></div><p>统一管理原文采集来源</p></div>
+<div class="kpi"><div class="kpi-label"><svg class="icon"><use href="#i-grid"/></svg>模板覆盖</div><div class="kpi-value"><span id="product-count">—</span><small>个品类</small></div><p>按品类、年份与规格匹配</p></div>
+<div class="kpi feature"><div class="kpi-label"><svg class="icon"><use href="#i-check"/></svg>最近确认报价</div><div class="kpi-value"><span id="quote-count">—</span><small>条</small></div><p id="quote-period">等待读取最近任务</p></div>
+<div class="kpi"><div class="kpi-label"><svg class="icon"><use href="#i-db"/></svg>数据库写入</div><div class="kpi-value"><span id="cell-count">—</span><small>个位置</small></div><p>品牌分表与汇总表同步更新</p></div>
+</section>
+<section id="workspace" aria-labelledby="workspace-title">
+<div class="section-heading"><h2 id="workspace-title"><span class="section-number mono">01</span>选择采集方式</h2><p>按任务选择数据入口</p></div>
+<div class="mode-grid">
+<button class="mode-card" type="button" data-mode="rpa" aria-pressed="true"><span class="mode-icon"><svg class="icon"><use href="#i-screen"/></svg></span><span class="mode-copy"><strong>微信历史采集<span class="mode-tag">推荐</span></strong><p>按日期获取行情文章，补齐历史</p></span><svg class="icon mode-check"><use href="#i-check"/></svg></button>
+<button class="mode-card" type="button" data-mode="rpa_links" aria-pressed="false"><span class="mode-icon"><svg class="icon"><use href="#i-link"/></svg></span><span class="mode-copy"><strong>原文链接解析</strong><p>解析文章表格、图片与价格</p></span><svg class="icon mode-check"><use href="#i-check"/></svg></button>
+<button class="mode-card" type="button" data-mode="history" aria-pressed="false"><span class="mode-icon"><svg class="icon"><use href="#i-book"/></svg></span><span class="mode-copy"><strong>微信读书通道</strong><p>获取最新文章，补抓公开合集</p></span><svg class="icon mode-check"><use href="#i-check"/></svg></button>
+</div>
+<div class="workspace-grid">
+<section class="panel"><div class="panel-head"><div><h2>配置本次更新</h2><p>接续现有数据，输出新的数据库副本</p></div><svg class="icon"><use href="#i-grid"/></svg></div><div class="panel-body">
+<form id="job"><label>数据库<select id="workbook" required aria-describedby="workbook-help"></select></label><p class="help" id="workbook-help">默认接续最新版本，已有历史数据保留。</p>
+<div class="database-import"><button class="secondary" id="database-open" type="button"><svg class="icon"><use href="#i-upload"/></svg>导入自己的数据库</button><input id="database-file" type="file" accept=".xlsx" hidden aria-label="选择最新 Excel 数据库"><p class="help" id="database-feedback" aria-live="polite">上传同格式 XLSX，保留自己的历史数据。</p></div>
+<div class="dates"><label>开始日期<input id="start" type="date" required></label><label>结束日期<input id="end" type="date" required></label></div>
+<label>运行方式<select id="mode"><optgroup label="采集文章"><option value="rpa">微信 RPA：按日期采集历史行情</option><option value="rpa_links">原文链接：解析表格与图片 OCR</option><option value="history">微信读书：最新文章＋公开合集补抓</option></optgroup><optgroup label="导入与验证"><option value="local">更新已导入的文章</option><option value="dry">仅试运行，查看匹配</option><option value="auto">公开搜索文章（备用）</option><option value="sample">样例验证（模拟价格）</option></optgroup></select></label>
+<p class="mode-hint" id="modehelp"></p>
+<label for="seedurls"><span class="field-caption"><strong id="seedlabel">微信原文链接</strong><span id="seed-required">可选</span></span><textarea id="seedurls" rows="2" placeholder="每行一个 mp.weixin.qq.com 原文链接"></textarea></label><p class="help" id="seedhelp"></p>
+<button class="primary" id="run" type="submit"><span id="run-label">开始更新数据库</span><svg class="icon"><use href="#i-arrow"/></svg></button></form>
+<p class="footnote"><svg class="icon"><use href="#i-info"/></svg><span>未提供或未确认的报价保持空白，不填 0，不沿用昨日价格。</span></p>
+<details class="advanced" id="import-details"><summary>导入文章与其他操作</summary><label for="articles">TXT / HTML / CSV<input id="articles" type="file" accept=".txt,.html,.htm,.csv" multiple></label><p class="help">推荐文件名：2026-10-09_易茅时价.txt。图片价格请选择原文链接解析。</p><button class="secondary" id="upload" type="button">导入选中文件</button><p class="help" id="inputs"></p></details>
+</div></section>
+<section class="panel" id="results" aria-labelledby="results-title"><div class="panel-head"><div><h2 id="results-title">最新数据库概览</h2><p id="results-subtitle">读取真实任务记录与报价证据</p></div><span class="pill" id="task-pill"><i class="dot"></i><span id="state" aria-live="polite">等待操作</span></span></div><div class="panel-body">
+<div id="empty-result" class="empty-result" hidden><svg class="icon"><use href="#i-db"/></svg><strong>准备好建立第一份数据库</strong><p>选择采集方式和日期，运行后在这里查看报价。</p></div>
+<div id="result-content"><div class="results-head"><h3 id="result-caption">最近成功任务</h3><span class="period mono" id="result-period">—</span></div><div class="stats" id="stats" hidden></div><p class="result-note" id="result-note"></p></div>
+<p id="alert" role="alert"></p>
+<div id="result-data"><div class="tabs" role="tablist" aria-label="运行结果"><button id="quotes-tab" type="button" role="tab" aria-controls="quotes-pane" aria-selected="true">确认报价<span class="tab-count" id="quotes-count">—</span></button><button id="review-tab" type="button" role="tab" aria-controls="review-pane" aria-selected="false" tabindex="-1">复核记录<span class="tab-count" id="review-count">—</span></button></div>
+<div class="data-pane" id="quotes-pane" role="tabpanel" aria-labelledby="quotes-tab"><div class="sources" id="brands" aria-label="各品牌确认报价"></div><label>查看品牌<select id="brand-filter"><option value="all">全部品牌</option><option value="茅台">茅台</option><option value="五粮液">五粮液</option><option value="泸州老窖">泸州老窖</option><option value="习酒">习酒</option></select></label><div id="quotes"></div></div><div class="data-pane" id="review-pane" role="tabpanel" aria-labelledby="review-tab" hidden><div id="rpaReview"></div><div id="gaps"></div><div id="coverage"></div></div><div class="sources" id="sources"></div><div class="downloads" id="downloads"></div></div>
+<details class="log-details"><summary>查看当前任务运行日志</summary><pre id="log">尚未运行</pre></details>
+</div></section></div>
+</section>
+<section class="library" id="database-library" aria-labelledby="library-title"><div class="section-heading"><h2 id="library-title"><span class="section-number mono">02</span>数据库版本</h2><p>每次成功更新自动轮换</p></div><div class="version-grid" id="versions"></div><p class="library-note">历史快照取目标日期当天或之前最近的版本。多余文件归档，旧下载链接仍可使用。</p></section>
+<footer class="footer"><span>酒价观测 · 本机采集与数据归档工作台</span><span>WECHAT → STRUCTURED DATA → EXCEL</span></footer>
+</main></div>
+<dialog id="guide" aria-labelledby="guide-title"><h2 id="guide-title">开始一次行情更新</h2><ol><li>点击“导入自己的数据库”，上传同格式 XLSX；也可默认接续最新版本。上传文件另存副本并检查模板。选择需要更新的日期范围，一次最多 32 天。</li><li>微信历史采集：先登录 Windows 微信，打开搜一搜；采集期间保持桌面解锁，暂停鼠标和键盘操作。</li><li>已有原文链接：选择链接解析，逐行粘贴文章地址。微信读书通道需授权，只返回最新文章，历史补抓依赖公开合集。</li><li>完成后下载 Excel，并检查未取得报价与图片识别复核记录。</li></ol><p class="help">公众号未公布某品类属于正常缺失。工具不会补造报价；15 天和 1 月前的快照随历史积累生成。</p><button id="guide-close" class="secondary" type="button">我知道了</button></dialog>
+</body></html>
