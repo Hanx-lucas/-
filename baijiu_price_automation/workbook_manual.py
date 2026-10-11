@@ -8,6 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 import posixpath
 import re
+import unicodedata
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile, ZIP_DEFLATED
 
@@ -62,6 +63,74 @@ def merge_styles(dst, src):
             lookup[i]=index
         target.set('count',str(len(target)));maps[section]=lookup
     return maps['cellXfs']
+
+
+def remove_legacy_account_mapping(sheet, shared, config):
+    """Remove only an account label and its adjacent, identified product notes.
+
+    Some original templates contain a separate 酒价参考 block inside the dated
+    price grid. Removing the later summary does not remove that earlier block.
+    Never remove entire rows or columns: they also contain dates and quotations.
+    """
+    data = sheet.find(q('sheetData'))
+    cells = {c.get('r'): c for row in data for c in row}
+    compact = lambda s: re.sub(r'\s+', '', unicodedata.normalize('NFKC', s))
+    products = {compact(name) for name in config['products']}
+    removed = set()
+    for address, header in cells.items():
+        if value(header, shared) not in config['accounts']:
+            continue
+        column, row = re.fullmatch(r'([A-Z]+)(\d+)', address).groups()
+        number = 0
+        for letter in column:
+            number = number * 26 + ord(letter) - ord('A') + 1
+        number += 1
+        right = ''
+        while number:
+            number, digit = divmod(number - 1, 26)
+            right = chr(ord('A') + digit) + right
+        notes, names = [], set()
+        for offset in range(len(products) + 1):
+            candidate = cells.get(f'{right}{int(row) + offset}')
+            if candidate is None or candidate.find(q('f')) is not None:
+                break
+            text = value(candidate, shared)
+            parts = re.split(r'[:：]', text, maxsplit=1)
+            if len(parts) != 2 or compact(parts[0]) not in products or not parts[1].strip():
+                break
+            names.add(compact(parts[0]))
+            notes.append(candidate.get('r'))
+        # An account name beside one ordinary note is insufficient evidence.
+        if len(names) >= 3:
+            removed.update([address, *notes])
+    for row in data:
+        for cell in list(row):
+            if cell.get('r') in removed:
+                row.remove(cell)
+    return sorted(removed)
+
+
+def clean_legacy_mappings(source: Path, destination: Path, config: dict):
+    """Narrow package patch, retaining all other cells and cached formula values."""
+    source, destination = Path(source), Path(destination)
+    removed, patched = {}, {}
+    with ZipFile(source) as original:
+        shared = strings(original)
+        for name, member in sheet_paths(original).items():
+            if name == '更新手册':
+                continue
+            sheet = ET.fromstring(original.read(member))
+            addresses = remove_legacy_account_mapping(sheet, shared, config)
+            if addresses:
+                removed[name] = addresses
+                patched[member] = ET.tostring(sheet, encoding='utf-8')
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(destination.name + '.legacy.tmp')
+        with ZipFile(temporary, 'w', ZIP_DEFLATED) as result:
+            for info in original.infolist():
+                result.writestr(info, patched.get(info.filename, original.read(info.filename)))
+    temporary.replace(destination)
+    return removed
 
 def normalize_manual(source: Path, destination: Path, config: dict):
     source,destination=Path(source),Path(destination)
@@ -165,4 +234,6 @@ def normalize_manual(source: Path, destination: Path, config: dict):
         with ZipFile(temp,'w',ZIP_DEFLATED) as result:
             for info in z.infolist(): result.writestr(info,patched.get(info.filename,z.read(info.filename)))
     temp.replace(destination)
-    return {'manual_range':owned.text,'removed_cells':removed,'products':len(config['products']),'channel_pairs':sum(len(p['aliases']) for p in config['products'].values())}
+    legacy_removed = clean_legacy_mappings(destination, destination, config)
+    removed.extend(legacy_removed.get('茅台', []))
+    return {'manual_range':owned.text,'removed_cells':removed,'legacy_removed_cells':legacy_removed,'products':len(config['products']),'channel_pairs':sum(len(p['aliases']) for p in config['products'].values())}
